@@ -1,0 +1,11 @@
+# Configurações do Ruby e Gems
+/.bundle/
+/vendor/bundle/
+/vendor/ruby/
+*.gem
+
+# Environment variables
+.env
+
+# Arquivos gerados pelo projeto
+*.csv

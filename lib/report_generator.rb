@@ -7,13 +7,13 @@ module Koine
       summary = Database.get_monthly_report(chat_id)
       return "Nenhum gasto registrado este mês." if summary.empty?
 
-      report = "📊 *Relatório Mensal - #{Time.now.strftime('%B/%Y')}*\n\n"
+      report = "*Relatório Mensal - #{Time.now.strftime('%B/%Y')}*\n\n"
       total = 0
       summary.each do |cat, amount|
-        report += "🔹 #{cat}: R$ #{sprintf('%.2f', amount)}\n"
+        report += "#{cat}: R$ #{sprintf('%.2f', amount)}\n"
         total += amount
       end
-      report += "\n💰 *Total Geral: R$ #{sprintf('%.2f', total)}*"
+      report += "\n*Total Geral: R$ #{sprintf('%.2f', total)}*"
       report
     end
 

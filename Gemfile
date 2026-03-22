@@ -1,6 +1,10 @@
 source 'https://rubygems.org'
 
 gem 'telegram-bot-ruby'
+gem 'gemini-ai'
+gem 'sqlite3'
+gem 'caxlsx'
 gem 'dotenv'
 gem 'http'
-gem 'csv'
+gem 'json'
+gem 'time'

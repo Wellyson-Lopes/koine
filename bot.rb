@@ -1,90 +1,98 @@
 require 'telegram/bot'
 require 'dotenv/load'
-require 'http'
-require 'json'
-require 'csv'
-require 'time'
+require 'fileutils'
+require 'base64'
+require_relative 'lib/database'
+require_relative 'lib/gemini_service'
+require_relative 'lib/report_generator'
+require_relative 'lib/tts_service'
 
-# Carrega as variáveis de ambiente do arquivo .env
+# Carrega ambiente
 TELEGRAM_TOKEN = ENV['TELEGRAM_BOT_TOKEN']
 GEMINI_API_KEY = ENV['GEMINI_API_KEY']
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=#{GEMINI_API_KEY}"
 
-def analyze_with_gemini(text)
-  prompt = <<~PROMPT
-    Você é um assistente financeiro que extrai gastos a partir de mensagens informais, áudios ou notas fiscais.
-    Da mensagem a seguir, extraia as seguintes informações no formato JSON estrito:
-    - descricao: o que foi gasto (ex: "Almoço", "Gasolina")
-    - valor: o valor numérico gasto (ex: 25.50)
-    - data: a data no formato YYYY-MM-DD (se não for mencionada na mensagem, use a data de hoje: #{Time.now.strftime('%Y-%m-%d')})
-    
-    Se houver múltiplos itens de gasto, extraia todos eles como um array de objetos JSON.
-    Se não houver gasto na mensagem, retorne um JSON vazio [].
-
-    Mensagem: "#{text}"
-  PROMPT
-
-  payload = {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { response_mime_type: "application/json" }
-  }
-
-  response = HTTP.post(GEMINI_URL, json: payload)
-  return nil unless response.status.success?
-  
-  begin
-    result = JSON.parse(response.body.to_s)
-    json_text = result.dig('candidates', 0, 'content', 'parts', 0, 'text')
-    return JSON.parse(json_text)
-  rescue StandardError => e
-    puts "Erro ao processar resposta do Gemini: #{e.message}"
-    return nil
-  end
+unless TELEGRAM_TOKEN && GEMINI_API_KEY
+  puts "ERRO: Por favor, configure TELEGRAM_BOT_TOKEN e GEMINI_API_KEY no arquivo .env"
+  exit
 end
 
-def save_expense_to_csv(expense, filename = "gastos_#{Time.now.strftime('%Y_%m')}.csv")
-  file_exists = File.exist?(filename)
-  
-  CSV.open(filename, "a", col_sep: ";") do |csv|
-    csv << ["Data", "Descrição", "Valor"] unless file_exists
-    csv << [expense['data'], expense['descricao'], expense['valor']]
-  end
-end
+# Inicializa serviços
+Koine::Database.setup
+gemini = Koine::GeminiService.new(GEMINI_API_KEY)
 
-puts "Bot Koine iniciado. Aguardando mensagens..."
+puts "🚀 Koine Bot iniciado..."
 
 Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
   bot.listen do |message|
+    chat_id = message.chat.id rescue nil
+    next unless chat_id
+
     case message
     when Telegram::Bot::Types::Message
-      # Por enquanto lidamos com texto simples para demonstrar
       if message.text == '/start'
-        bot.api.send_message(chat_id: message.chat.id, text: "Olá! Sou o Koine, seu assistente financeiro. Envie um texto detalhando seus gastos e eu os registrarei!")
-      elsif message.text
-        bot.api.send_message(chat_id: message.chat.id, text: "Analisando seu gasto...")
-        
-        expenses = analyze_with_gemini(message.text)
-        
-        if expenses && !expenses.empty?
-          expenses = [expenses] if expenses.is_a?(Hash) # Se retornar um objeto, transformar em array
+        bot.api.send_message(chat_id: chat_id, text: "Olá! Eu sou o Koine. Envie um texto ou áudio com seus gastos (ex: '20 reais em café') e eu registrarei para você!")
 
-          total_registrado = 0
-          resposta = "Gasto(s) registrado(s):\n"
-          
-          expenses.each do |exp|
-            save_expense_to_csv(exp)
-            resposta += "- #{exp['descricao']} (#{exp['data']}): R$ #{exp['valor']}\n"
-            total_registrado += exp['valor'].to_f
-          end
-          
-          resposta += "\nTotal nesta mensagem: R$ #{total_registrado.round(2)}"
-          bot.api.send_message(chat_id: message.chat.id, text: resposta)
-        else
-          bot.api.send_message(chat_id: message.chat.id, text: "Não consegui identificar um gasto na sua mensagem.")
+      elsif message.text == '/relatorio'
+        bot.api.send_message(chat_id: chat_id, text: "Gerando seu relatório mensal...")
+        
+        # 1. Texto do relatório
+        report_text = Koine::ReportGenerator.generate_text(chat_id)
+        bot.api.send_message(chat_id: chat_id, text: report_text, parse_mode: 'Markdown')
+
+        # 2. Planilha Excel
+        excel_path = Koine::ReportGenerator.generate_excel(chat_id)
+        if File.exist?(excel_path)
+          bot.api.send_document(chat_id: chat_id, document: Faraday::UploadIO.new(excel_path, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'))
         end
-      elsif message.photo || message.voice
-        bot.api.send_message(chat_id: message.chat.id, text: "No momento só processo texto, mas a análise de áudio e notas fiscais já está no nosso roadmap de implementação usando a API do Gemini!")
+
+        # 3. Áudio TTS
+        audio_report = Koine::TTSService.generate_audio(report_text, chat_id)
+        if audio_report && File.exist?(audio_report)
+          bot.api.send_voice(chat_id: chat_id, voice: Faraday::UploadIO.new(audio_report, 'audio/ogg'))
+        end
+
+      elsif message.text
+        # Processamento de TEXTO
+        result = gemini.extract_expense_from_text(message.text)
+        if result
+          expenses = result.is_a?(Array) ? result : [result]
+          expenses.each { |exp| Koine::Database.save_expense(chat_id, exp, message.text) }
+          bot.api.send_message(chat_id: chat_id, text: "✅ Registrado: #{expenses.map{|e| e['item']}.join(', ')} (R$ #{expenses.sum{|e| e['valor'].to_f}})")
+        else
+          bot.api.send_message(chat_id: chat_id, text: "🤔 Não consegui identificar um gasto nessa mensagem.")
+        end
+
+      elsif message.voice || message.audio
+        # Processamento de ÁUDIO
+        bot.api.send_message(chat_id: chat_id, text: "Ouvindo seu áudio... 🎧")
+        
+        file_info = bot.api.get_file(file_id: (message.voice || message.audio).file_id)
+        file_url = "https://api.telegram.org/file/bot#{TELEGRAM_TOKEN}/#{file_info['result']['file_path']}"
+        
+        # Download local temporário
+        local_path = "data/temp_audio_#{chat_id}.ogg"
+        File.open(local_path, "wb") { |f| f.write(HTTP.get(file_url).body) }
+        
+        # Envia para o Gemini
+        result = gemini.extract_expense_from_audio(local_path)
+        
+        if result
+          expenses = result.is_a?(Array) ? result : [result]
+          expenses.each { |exp| Koine::Database.save_expense(chat_id, exp, "[Áudio]") }
+          bot.api.send_message(chat_id: chat_id, text: "✅ Áudio processado! Registrei: #{expenses.map{|e| e['item']}.join(', ')} (R$ #{expenses.sum{|e| e['valor'].to_f}})")
+        else
+          bot.api.send_message(chat_id: chat_id, text: "❌ Não entendi o gasto no áudio.")
+        end
+        
+        File.delete(local_path) if File.exist?(local_path)
+
+      elsif message.photo
+        bot.api.send_message(chat_id: chat_id, text: "📸 Recebi a foto! A função de ler notas fiscais será implementada na próxima versão utilizando a visão computacional do Gemini 1.5 Pro.")
       end
     end
+  rescue => e
+    puts "ERRO: #{e.message}"
+    puts e.backtrace.join("\n")
+    bot.api.send_message(chat_id: message.chat.id, text: "⚠️ Ocorreu um erro ao processar sua solicitação.") rescue nil
   end
 end

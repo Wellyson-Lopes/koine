@@ -3,6 +3,7 @@ require 'dotenv/load'
 require 'fileutils'
 require 'base64'
 require 'http'
+require 'faraday'
 require_relative 'lib/database'
 require_relative 'lib/gemini_service'
 require_relative 'lib/report_generator'
@@ -29,18 +30,6 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
     next unless chat_id
 
     begin
-      summary = Koine::Database.get_monthly_summary(chat_id)
-      
-      # Contexto inteligente: envia histórico detalhado apenas se o usuário pedir análise
-      needs_analysis = message.text.to_s.downcase.match?(/redundante|conselho|analis|repete|dica|padrão/)
-      
-      if needs_analysis
-        history = Koine::Database.get_safe_recent_history(chat_id)
-        context = "Resumo por categoria: #{summary}\nÚltimos gastos (sanitizados): #{history}"
-      else
-        context = "Resumo por categoria: #{summary}"
-      end
-
       case message
       when Telegram::Bot::Types::Message
         if message.text == '/start'
@@ -82,6 +71,12 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
           end
 
         elsif message.text
+          # Constroi contexto apenas quando necessário
+          summary = Koine::Database.get_monthly_summary(chat_id)
+          needs_analysis = message.text.to_s.downcase.match?(/redundante|conselho|analis|repete|dica|padrão/)
+          context = "Resumo por categoria: #{summary}"
+          context += "\nÚltimos gastos (sanitizados): #{Koine::Database.get_safe_recent_history(chat_id)}" if needs_analysis
+
           result = gemini.process_message(message.text, context)
           
           if result.is_a?(Hash)
@@ -112,6 +107,10 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
 
         elsif message.voice || message.audio
           bot.api.send_message(chat_id: chat_id, text: "Analisando seu áudio... 🎧")
+          
+          # No áudio enviamos apenas o resumo como contexto base
+          context = "Resumo por categoria: #{Koine::Database.get_monthly_summary(chat_id)}"
+          
           file_id = (message.voice || message.audio).file_id
           file_info = bot.api.get_file(file_id: file_id)
           local_path = "data/temp_audio_#{chat_id}.ogg"
@@ -170,6 +169,8 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
         end
       end
     rescue => e
+      puts "ERRO [#{e.class}]: #{e.message}"
+      puts e.backtrace.first(5).join("\n")
       bot.api.send_message(chat_id: chat_id, text: "⚠️ Ocorreu um erro ao processar sua solicitação.") rescue nil
     end
   end

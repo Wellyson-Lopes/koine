@@ -49,7 +49,7 @@ module Koine
         "SELECT category, SUM(amount) FROM expenses WHERE chat_id = ? AND expense_date >= ? GROUP BY category",
         [chat_id, start_date]
       )
-      rows.map { |row| "#{row[0]}: R$ #{row[1].round(2)}" }.join(", ")
+      rows.map { |row| "#{row[0]}: R$ #{(row[1] || 0.0).round(2)}" }.join(", ")
     end
 
     def self.search_expenses(chat_id, query)

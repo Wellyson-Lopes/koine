@@ -16,18 +16,22 @@ module Koine
         Contexto de gastos atuais: #{context || "Nenhum dado disponível ainda."}
 
         Identifique a intenção do usuário na mensagem: "#{text}"
-        Retorne APENAS um JSON no formato:
+        Retorne APENAS um JSON válido no formato do exemplo abaixo:
         {
-          "intent": "SAVE" | "QUERY" | "ADVICE" | "OTHER",
-          "data": { ... dados extraídos ... },
-          "response": "Resposta amigável caso seja uma dúvida simples"
+          "intent": "SAVE",
+          "data": { "item": "café", "valor": 5.0, "categoria": "alimentação", "data": "2024-03-20" },
+          "response": "Sua resposta amigável aqui"
         }
 
+        VALORES PERMITIDOS PARA 'intent':
+        - SAVE: Use para novos gastos.
+        - QUERY: Use para perguntas sobre gastos (ex: "Quanto gastei com café?"). Extraia em 'data': {"termo_busca": "termo", "periodo": "período"}
+        - ADVICE: Use para conselhos financeiros baseados no contexto.
+        - OTHER: Conversas genéricas ou saudações.
+
         REGRAS:
-        - SAVE: Use para novos gastos. Extraia: {"item": "...", "valor": 0.0, "categoria": "...", "data": "YYYY-MM-DD"}
-        - QUERY: Use para perguntas sobre gastos (ex: "Quanto gastei com café?"). Extraia: {"termo_busca": "...", "periodo": "..."}
-        - ADVICE: Use para conselhos financeiros. Analise o contexto e dê dicas reais.
-        - OTHER: Conversas genéricas.
+        - Se for SAVE, preencha 'data' com item, valor, categoria e data.
+        - Se for QUERY ou ADVICE, use o campo 'response' para responder amigavelmente.
       PROMPT
 
       payload = {
@@ -46,12 +50,14 @@ module Koine
         Contexto atual de gastos: #{context || "Vazio"}
         Hoje é: #{Time.now.strftime('%Y-%m-%d')}
 
-        Retorne APENAS um JSON:
+        Retorne APENAS um JSON válido no formato do exemplo abaixo:
         {
-          "intent": "SAVE" | "QUERY" | "ADVICE" | "OTHER",
-          "data": { ... caso seja SAVE extraia item, valor, categoria ... },
-          "response": "Sua resposta amigável para QUERY, ADVICE ou OTHER"
+          "intent": "SAVE",
+          "data": { "item": "lanche", "valor": 10.0, "categoria": "comida", "data": "2024-03-20" },
+          "response": "Sua resposta amigável aqui"
         }
+
+        VALORES PERMITIDOS PARA 'intent': SAVE, QUERY, ADVICE, OTHER.
       PROMPT
 
       payload = {

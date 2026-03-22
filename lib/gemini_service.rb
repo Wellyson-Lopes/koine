@@ -6,34 +6,36 @@ module Koine
   class GeminiService
     def initialize(api_key)
       @api_key = api_key
-      # Usamos o modelo Gemini 2.5 Flash, confirmado como disponível na sua conta
       @url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=#{@api_key}"
+      @cooldown_until = Time.now # Memória de bloqueio
     end
 
-    def extract_expense_from_text(text)
+    def process_message(text, context = nil)
+      return check_cooldown if Time.now < @cooldown_until
+
       prompt = <<~PROMPT
-        Você é um assistente financeiro. Extraia informações de gastos deste texto: "#{text}".
-        Retorne APENAS um JSON no formato:
-        {"item": "nome do item", "valor": 0.0, "categoria": "escolha uma categoria lógica", "data": "YYYY-MM-DD"}
-        Se houver múltiplos gastos, retorne um array de JSONs.
-        Use a data de hoje #{Time.now.strftime('%Y-%m-%d')} se não for informada.
-        Se não for um gasto, retorne null.
+        Você é o Koine, um assistente financeiro inteligente.
+        Hoje é: #{Time.now.strftime('%Y-%m-%d')}
+        Contexto de gastos: #{context || "Nenhum dado."}
+
+        Responda à mensagem: "#{text}"
+        Retorne APENAS um JSON:
+        {
+          "intent": "SAVE", "QUERY", "ADVICE" ou "OTHER",
+          "data": { "item": "...", "valor": 0.0, "categoria": "...", "data": "YYYY-MM-DD" },
+          "response": "Sua resposta amigável aqui"
+        }
       PROMPT
 
-      payload = {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { 
-          response_mime_type: "application/json" 
-        }
-      }
-
+      payload = { contents: [{ parts: [{ text: prompt }] }] }
       call_api(payload)
     end
 
-    def extract_expense_from_audio(audio_path)
+    def process_audio(audio_path, context = nil)
+      return check_cooldown if Time.now < @cooldown_until
+      # ... resto do código de áudio ...
       audio_data = Base64.strict_encode64(File.read(audio_path))
-      
-      prompt = "Extraia os gastos deste áudio. Retorne APENAS JSON: {\"item\": \"nome\", \"valor\": 0.0, \"categoria\": \"...\", \"data\": \"YYYY-MM-DD\"}"
+      prompt = "Você é o Koine. Identifique a intenção (SAVE, QUERY, ADVICE, OTHER). Contexto: #{context}. Retorne apenas JSON."
 
       payload = {
         contents: [{
@@ -41,59 +43,81 @@ module Koine
             { text: prompt },
             { inline_data: { mime_type: "audio/ogg", data: audio_data } }
           ]
-        }],
-        generationConfig: { 
-          response_mime_type: "application/json" 
-        }
+        }]
       }
-
       call_api(payload)
     end
 
     def extract_expense_from_image(image_path)
+      return check_cooldown if Time.now < @cooldown_until
       image_data = Base64.strict_encode64(File.read(image_path))
-      
-      prompt = <<~PROMPT
-        Analise esta foto de nota fiscal ou recibo. 
-        Extraia as informações de gastos. Retorne APENAS um JSON no formato:
-        {"item": "nome do estabelecimento ou item principal", "valor": 0.0, "categoria": "categoria", "data": "YYYY-MM-DD"}
-        Se houver múltiplos itens importantes, pode retornar um array.
-        Se não conseguir ler um gasto, retorne null.
-      PROMPT
+      # ... resto do código de imagem ...
+      prompt = "Analise a nota fiscal. Extraia gasto em JSON: {\"item\": \"...\", \"valor\": 0.0, \"categoria\": \"...\", \"data\": \"YYYY-MM-DD\"}"
 
       payload = {
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { text: prompt },
-              { inline_data: { mime_type: "image/jpeg", data: image_data } }
-            ]
-          }
-        ],
-        generationConfig: { response_mime_type: "application/json" }
+        contents: [{
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: "image/jpeg", data: image_data } }
+          ]
+        }]
       }
-
       call_api(payload)
+    end
+
+    private
+
+    def check_cooldown
+      remaining = (@cooldown_until - Time.now).ceil
+      { "intent" => "OTHER", "response" => "⚠️ Sistema em resfriamento. Por favor, aguarde mais exatos #{remaining} segundos para liberar seu acesso. ⏳" }
     end
 
     def call_api(payload)
       response = HTTP.post(@url, json: payload)
-      
+
       if response.status.success?
         result = JSON.parse(response.body.to_s)
         text = result.dig('candidates', 0, 'content', 'parts', 0, 'text')
-        return nil if text.nil? || text.strip == 'null'
-        
-        # Limpa possíveis markdowns e parseia o JSON final
-        JSON.parse(text.gsub(/```json|```/, '').strip)
+        return { "intent" => "OTHER", "response" => "..." } if text.nil? || text.strip == 'null'
+
+        json_match = text.match(/\{.*\}/m)
+        return { "intent" => "OTHER", "response" => text } if json_match.nil?
+
+        JSON.parse(json_match[0])
+      elsif response.status.code == 429
+        begin
+          error_body = response.body.to_s
+          error_data = JSON.parse(error_body)
+
+          # Tenta pegar do campo 'message' via Regex
+          message = error_data.dig('error', 'message') || ""
+          seconds_match = message.match(/retry in ([\d\.]+)/)
+
+          seconds = 30 # Default
+          if seconds_match
+            seconds = seconds_match[1].to_f.ceil
+          else
+            details = error_data.dig('error', 'details') || []
+            retry_info = details.find { |d| d['@type']&.include?('RetryInfo') }
+            if retry_info
+              delay = retry_info['retryDelay']
+              seconds = delay.is_a?(Hash) ? delay['seconds'].to_i : delay.to_s.gsub('s', '').to_i
+            end
+          end
+
+          # GRAVA NA MEMÓRIA LOCAL: bloqueia por X segundos + 2s de segurança
+          @cooldown_until = Time.now + seconds + 2
+
+          { "intent" => "OTHER", "response" => "⚠️ Limite atingido! O Google pede para aguardar #{seconds} segundos. Vou bloquear novas tentativas até lá para garantir o reset. ⏳" }
+        rescue => e
+          @cooldown_until = Time.now + 30
+          { "intent" => "OTHER", "response" => "⚠️ Limite atingido! Aguarde 30 segundos e tente novamente." }
+        end
       else
-        puts "Erro na API Gemini: #{response.status} - #{response.body}"
-        nil
+        { "intent" => "OTHER", "response" => "Tive um soluço técnico aqui. Pode tentar novamente?" }
       end
     rescue => e
-      puts "Erro ao processar resposta: #{e.message}"
-      nil
+      { "intent" => "OTHER", "response" => "Não consegui processar sua mensagem agora." }
     end
   end
 end

@@ -43,12 +43,39 @@ module Koine
       )
     end
 
-    def self.get_monthly_details(chat_id)
+    def self.get_monthly_summary(chat_id)
+      start_date = Time.now.strftime("%Y-%m-01")
+      rows = conn.execute(
+        "SELECT category, SUM(amount) FROM expenses WHERE chat_id = ? AND expense_date >= ? GROUP BY category",
+        [chat_id, start_date]
+      )
+      rows.map { |row| "#{row[0]}: R$ #{(row[1] || 0.0).round(2)}" }.join(", ")
+    end
+
+    def self.search_expenses(chat_id, query)
+      # Busca simples por termo na descrição ou categoria
+      conn.execute(
+        "SELECT expense_date, description, amount FROM expenses WHERE chat_id = ? AND (description LIKE ? OR category LIKE ?) ORDER BY expense_date DESC LIMIT 10",
+        [chat_id, "%#{query}%", "%#{query}%"]
+      )
+    end
+
+    def self.get_monthly_details_for_excel(chat_id)
       start_date = Time.now.strftime("%Y-%m-01")
       conn.execute(
         "SELECT expense_date, description, category, amount FROM expenses WHERE chat_id = ? AND expense_date >= ? ORDER BY expense_date ASC",
         [chat_id, start_date]
       )
+    end
+
+    def self.get_safe_recent_history(chat_id, limit = 10)
+      start_date = Time.now.strftime("%Y-%m-01")
+      rows = conn.execute(
+        "SELECT description, amount, category FROM expenses WHERE chat_id = ? AND expense_date >= ? ORDER BY expense_date DESC LIMIT ?",
+        [chat_id, start_date, limit]
+      )
+      # Trunca descrições para 15 caracteres para privacidade e economia de tokens
+      rows.map { |r| "#{r[0].to_s[0..14]}... | R$ #{r[1]} | #{r[2]}" }.join(", ")
     end
   end
 end

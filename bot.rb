@@ -78,26 +78,30 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
         elsif message.text
           result = gemini.process_message(message.text, context)
           
-          case result['intent']
-          when 'SAVE'
-            exp = result['data']
-            Koine::Database.save_expense(chat_id, exp, message.text)
-            bot.api.send_message(chat_id: chat_id, text: "✅ Registrado: #{exp['item']} (R$ #{exp['valor']})")
-          
-          when 'QUERY'
-            search_term = result.dig('data', 'termo_busca')
-            rows = Koine::Database.search_expenses(chat_id, search_term)
-            if rows.empty?
-              bot.api.send_message(chat_id: chat_id, text: "Não encontrei gastos relacionados a '#{search_term}'.")
-            else
-              resp = "Encontrei esses gastos com '#{search_term}':\n"
-              rows.each { |r| resp += "- #{r[0]}: #{r[1]} (R$ #{r[2]})\n" }
-              bot.api.send_message(chat_id: chat_id, text: resp)
-            end
+          if result.is_a?(Hash)
+            case result['intent']
+            when 'SAVE'
+              exp = result['data']
+              Koine::Database.save_expense(chat_id, exp, message.text)
+              bot.api.send_message(chat_id: chat_id, text: "✅ Registrado: #{exp['item']} (R$ #{exp['valor']})")
+            
+            when 'QUERY'
+              search_term = result.dig('data', 'termo_busca')
+              rows = Koine::Database.search_expenses(chat_id, search_term)
+              if rows.empty?
+                bot.api.send_message(chat_id: chat_id, text: "Não encontrei gastos relacionados a '#{search_term}'.")
+              else
+                resp = "Encontrei esses gastos com '#{search_term}':\n"
+                rows.each { |r| resp += "- #{r[0]}: #{r[1]} (R$ #{r[2]})\n" }
+                bot.api.send_message(chat_id: chat_id, text: resp)
+              end
 
-          when 'ADVICE', 'OTHER'
-            msg = result['response'] || "Como posso te ajudar?"
-            bot.api.send_message(chat_id: chat_id, text: msg) unless msg.strip.empty?
+            when 'ADVICE', 'OTHER'
+              msg = result['response'] || "Como posso te ajudar?"
+              bot.api.send_message(chat_id: chat_id, text: msg) unless msg.strip.empty?
+            end
+          else
+            bot.api.send_message(chat_id: chat_id, text: "🤔 Tive um problema ao entender sua mensagem. Pode repetir ou tentar de outra forma?")
           end
 
         elsif message.voice || message.audio
@@ -112,13 +116,17 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
             
             result = gemini.process_audio(local_path, context)
             
-            if result['intent'] == 'SAVE'
-              exp = result['data']
-              Koine::Database.save_expense(chat_id, exp, "[Áudio]")
-              bot.api.send_message(chat_id: chat_id, text: "✅ Áudio processado! Registrei: #{exp['item']} (R$ #{exp['valor']})")
+            if result.is_a?(Hash)
+              if result['intent'] == 'SAVE'
+                exp = result['data']
+                Koine::Database.save_expense(chat_id, exp, "[Áudio]")
+                bot.api.send_message(chat_id: chat_id, text: "✅ Áudio processado! Registrei: #{exp['item']} (R$ #{exp['valor']})")
+              else
+                msg = result['response'] || "Não consegui processar esse áudio."
+                bot.api.send_message(chat_id: chat_id, text: msg) unless msg.strip.empty?
+              end
             else
-              msg = result['response'] || "Não consegui processar esse áudio."
-              bot.api.send_message(chat_id: chat_id, text: msg) unless msg.strip.empty?
+              bot.api.send_message(chat_id: chat_id, text: "⚠️ Tive um problema ao ouvir seu áudio. Pode tentar gravar novamente?")
             end
           ensure
             File.delete(local_path) if File.exist?(local_path)

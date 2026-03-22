@@ -28,9 +28,10 @@ module Koine
     end
 
     def self.save_expense(chat_id, data, raw_text)
+      amount = data['valor'].to_s.gsub(',', '.').to_f rescue 0.0
       conn.execute(
         "INSERT INTO expenses (chat_id, description, amount, category, expense_date, raw_text) VALUES (?, ?, ?, ?, ?, ?)",
-        [chat_id, data['item'], data['valor'], data['categoria'], data['data'] || Time.now.strftime("%Y-%m-%d"), raw_text]
+        [chat_id, data['item'], amount, data['categoria'], data['data'] || Time.now.strftime("%Y-%m-%d"), raw_text]
       )
     end
 

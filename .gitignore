@@ -4,8 +4,18 @@
 /vendor/ruby/
 *.gem
 
-# Environment variables
+# Environment variables (SEGURANÇA!)
 .env
 
-# Arquivos gerados pelo projeto
-*.csv
+# Banco de Dados SQLite (Dados Pessoais)
+data/*.sqlite3
+data/temp_*
+
+# Relatórios e Planilhas (Dados Financeiros)
+reports/*.xlsx
+reports/*.ogg
+reports/*.csv
+
+# Arquivos de log e sistema
+*.log
+.DS_Store

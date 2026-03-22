@@ -30,8 +30,16 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
 
     begin
       summary = Koine::Database.get_monthly_summary(chat_id)
-      history = Koine::Database.get_last_expenses(chat_id)
-      context = "Resumo por categoria: #{summary}\nHistórico detalhado:\n#{history}"
+      
+      # Contexto inteligente: envia histórico detalhado apenas se o usuário pedir análise
+      needs_analysis = message.text.to_s.downcase.match?(/redundante|conselho|analis|repete|dica|padrão/)
+      
+      if needs_analysis
+        history = Koine::Database.get_safe_recent_history(chat_id)
+        context = "Resumo por categoria: #{summary}\nÚltimos gastos (sanitizados): #{history}"
+      else
+        context = "Resumo por categoria: #{summary}"
+      end
 
       case message
       when Telegram::Bot::Types::Message

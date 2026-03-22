@@ -68,13 +68,14 @@ module Koine
       )
     end
 
-    def self.get_last_expenses(chat_id, limit = 50)
+    def self.get_safe_recent_history(chat_id, limit = 10)
       start_date = Time.now.strftime("%Y-%m-01")
       rows = conn.execute(
-        "SELECT expense_date, description, amount, category FROM expenses WHERE chat_id = ? AND expense_date >= ? ORDER BY expense_date DESC LIMIT ?",
+        "SELECT description, amount, category FROM expenses WHERE chat_id = ? AND expense_date >= ? ORDER BY expense_date DESC LIMIT ?",
         [chat_id, start_date, limit]
       )
-      rows.map { |r| "#{r[0]} | #{r[1]} | R$ #{r[2]} | #{r[3]}" }.join("\n")
+      # Trunca descrições para 15 caracteres para privacidade e economia de tokens
+      rows.map { |r| "#{r[0].to_s[0..14]}... | R$ #{r[1]} | #{r[2]}" }.join(", ")
     end
   end
 end

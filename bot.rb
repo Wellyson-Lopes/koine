@@ -100,13 +100,20 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
           
           begin
             response = HTTP.follow.get("https://api.telegram.org/file/bot#{TELEGRAM_TOKEN}/#{file_info.file_path}")
-            File.open(local_path, "wb") { |f| f.write(response.body) }
-            result = gemini.extract_expense_from_image(local_path)
             
-            if result
-              expenses = result.is_a?(Array) ? result : [result]
-              expenses.each { |exp| Koine::Database.save_expense(chat_id, exp, "[Foto]") }
-              bot.api.send_message(chat_id: chat_id, text: "✅ Nota lida! Registrei: #{expenses.map{|e| e['item']}.join(', ')} (R$ #{expenses.sum{|e| e['valor'].to_f}})")
+            if response.status.success?
+              File.open(local_path, "wb") { |f| f.write(response.body) }
+              result = gemini.extract_expense_from_image(local_path)
+              
+              if result && (!result.is_a?(Array) || !result.empty?)
+                expenses = result.is_a?(Array) ? result : [result]
+                expenses.each { |exp| Koine::Database.save_expense(chat_id, exp, "[Foto]") }
+                bot.api.send_message(chat_id: chat_id, text: "✅ Nota lida! Registrei: #{expenses.map{|e| e['item']}.join(', ')} (R$ #{expenses.sum{|e| e['valor'].to_f}})")
+              else
+                bot.api.send_message(chat_id: chat_id, text: "⚠️ Não consegui ler essa nota da foto. Você pode tentar outra foto com melhor iluminação/enquadramento ou digitar o gasto manualmente.")
+              end
+            else
+              bot.api.send_message(chat_id: chat_id, text: "❌ Tive um problema técnico ao baixar sua foto do Telegram.")
             end
           ensure
             File.delete(local_path) if File.exist?(local_path)

@@ -43,12 +43,30 @@ module Koine
       )
     end
 
-    def self.get_monthly_details(chat_id)
+    def self.get_monthly_summary(chat_id)
       start_date = Time.now.strftime("%Y-%m-01")
-      conn.execute(
-        "SELECT expense_date, description, category, amount FROM expenses WHERE chat_id = ? AND expense_date >= ? ORDER BY expense_date ASC",
+      rows = conn.execute(
+        "SELECT category, SUM(amount) FROM expenses WHERE chat_id = ? AND expense_date >= ? GROUP BY category",
         [chat_id, start_date]
       )
+      rows.map { |row| "#{row[0]}: R$ #{row[1].round(2)}" }.join(", ")
+    end
+
+    def self.search_expenses(chat_id, query)
+      # Busca simples por termo na descrição ou categoria
+      conn.execute(
+        "SELECT expense_date, description, amount FROM expenses WHERE chat_id = ? AND (description LIKE ? OR category LIKE ?) ORDER BY expense_date DESC LIMIT 10",
+        [chat_id, "%#{query}%", "%#{query}%"]
+      )
+    end
+
+    def self.get_last_expenses(chat_id, limit = 50)
+      start_date = Time.now.strftime("%Y-%m-01")
+      rows = conn.execute(
+        "SELECT expense_date, description, amount, category FROM expenses WHERE chat_id = ? AND expense_date >= ? ORDER BY expense_date DESC LIMIT ?",
+        [chat_id, start_date, limit]
+      )
+      rows.map { |r| "#{r[0]} | #{r[1]} | R$ #{r[2]} | #{r[3]}" }.join("\n")
     end
   end
 end

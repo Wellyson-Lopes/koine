@@ -6,59 +6,52 @@ module Koine
   class GeminiService
     def initialize(api_key)
       @api_key = api_key
-      # Usamos o modelo Gemini 2.5 Flash, confirmado como disponível na sua conta
       @url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=#{@api_key}"
     end
 
-    def extract_expense_from_text(text)
+    def process_message(text, context = nil)
       prompt = <<~PROMPT
-        Você é um assistente financeiro. Extraia informações de gastos deste texto: "#{text}".
+        Você é o Koine, um assistente financeiro inteligente e amigável.
+        Data de hoje: #{Time.now.strftime('%Y-%m-%d')}
+        Contexto de gastos atuais: #{context || "Nenhum dado disponível ainda."}
+
+        Identifique a intenção do usuário na mensagem: "#{text}"
         Retorne APENAS um JSON no formato:
-        {"item": "nome do item", "valor": 0.0, "categoria": "escolha uma categoria lógica", "data": "YYYY-MM-DD"}
-        Se houver múltiplos gastos, retorne um array de JSONs.
-        Use a data de hoje #{Time.now.strftime('%Y-%m-%d')} se não for informada.
-        Se não for um gasto, retorne null.
+        {
+          "intent": "SAVE" | "QUERY" | "ADVICE" | "OTHER",
+          "data": { ... dados extraídos ... },
+          "response": "Resposta amigável caso seja uma dúvida simples"
+        }
+
+        REGRAS:
+        - SAVE: Use para novos gastos. Extraia: {"item": "...", "valor": 0.0, "categoria": "...", "data": "YYYY-MM-DD"}
+        - QUERY: Use para perguntas sobre gastos (ex: "Quanto gastei com café?"). Extraia: {"termo_busca": "...", "periodo": "..."}
+        - ADVICE: Use para conselhos financeiros. Analise o contexto e dê dicas reais.
+        - OTHER: Conversas genéricas.
       PROMPT
 
       payload = {
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { 
-          response_mime_type: "application/json" 
-        }
+        generationConfig: { response_mime_type: "application/json" }
       }
 
       call_api(payload)
     end
 
-    def extract_expense_from_audio(audio_path)
+    def process_audio(audio_path, context = nil)
       audio_data = Base64.strict_encode64(File.read(audio_path))
       
-      prompt = "Extraia os gastos deste áudio. Retorne APENAS JSON: {\"item\": \"nome\", \"valor\": 0.0, \"categoria\": \"...\", \"data\": \"YYYY-MM-DD\"}"
-
-      payload = {
-        contents: [{
-          parts: [
-            { text: prompt },
-            { inline_data: { mime_type: "audio/ogg", data: audio_data } }
-          ]
-        }],
-        generationConfig: { 
-          response_mime_type: "application/json" 
-        }
-      }
-
-      call_api(payload)
-    end
-
-    def extract_expense_from_image(image_path)
-      image_data = Base64.strict_encode64(File.read(image_path))
-      
       prompt = <<~PROMPT
-        Analise esta foto de nota fiscal ou recibo. 
-        Extraia as informações de gastos. Retorne APENAS um JSON no formato:
-        {"item": "nome do estabelecimento ou item principal", "valor": 0.0, "categoria": "categoria", "data": "YYYY-MM-DD"}
-        Se houver múltiplos itens importantes, pode retornar um array.
-        Se não conseguir ler um gasto, retorne null.
+        Você é o Koine, um assistente financeiro. Ouça o áudio anexo e identifique a intenção.
+        Contexto atual de gastos: #{context || "Vazio"}
+        Hoje é: #{Time.now.strftime('%Y-%m-%d')}
+
+        Retorne APENAS um JSON:
+        {
+          "intent": "SAVE" | "QUERY" | "ADVICE" | "OTHER",
+          "data": { ... caso seja SAVE extraia item, valor, categoria ... },
+          "response": "Sua resposta amigável para QUERY, ADVICE ou OTHER"
+        }
       PROMPT
 
       payload = {
@@ -67,7 +60,7 @@ module Koine
             role: 'user',
             parts: [
               { text: prompt },
-              { inline_data: { mime_type: "image/jpeg", data: image_data } }
+              { inline_data: { mime_type: "audio/ogg", data: audio_data } }
             ]
           }
         ],
@@ -77,15 +70,32 @@ module Koine
       call_api(payload)
     end
 
+    def extract_expense_from_image(image_path)
+      # Mantemos o de imagem focado em extração por enquanto
+      image_data = Base64.strict_encode64(File.read(image_path))
+      prompt = "Analise esta foto de nota fiscal. Extraia gasto em JSON: {\"item\": \"...\", \"valor\": 0.0, \"categoria\": \"...\", \"data\": \"YYYY-MM-DD\"}"
+
+      payload = {
+        contents: [{
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: "image/jpeg", data: image_data } }
+          ]
+        }],
+        generationConfig: { response_mime_type: "application/json" }
+      }
+
+      call_api(payload)
+    end
+
+    private
+
     def call_api(payload)
       response = HTTP.post(@url, json: payload)
-      
       if response.status.success?
         result = JSON.parse(response.body.to_s)
         text = result.dig('candidates', 0, 'content', 'parts', 0, 'text')
         return nil if text.nil? || text.strip == 'null'
-        
-        # Limpa possíveis markdowns e parseia o JSON final
         JSON.parse(text.gsub(/```json|```/, '').strip)
       else
         puts "Erro na API Gemini: #{response.status} - #{response.body}"

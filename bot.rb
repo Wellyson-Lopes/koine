@@ -64,7 +64,6 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
               )
             end
           rescue => e
-            puts "Erro ao gerar/enviar Excel: #{e.message}"
             bot.api.send_message(chat_id: chat_id, text: "❌ Não consegui gerar a planilha Excel.")
           end
 
@@ -79,7 +78,6 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
               )
             end
           rescue => e
-            puts "Erro ao gerar/enviar Áudio: #{e.message}"
             bot.api.send_message(chat_id: chat_id, text: "❌ Não consegui gerar o relatório em voz.")
           end
 
@@ -148,11 +146,11 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
           
           begin
             response = HTTP.follow.get("https://api.telegram.org/file/bot#{TELEGRAM_TOKEN}/#{file_info.file_path}")
-            
+
             if response.status.success?
               File.open(local_path, "wb") { |f| f.write(response.body) }
               result = gemini.extract_expense_from_image(local_path)
-              
+
               if result && (!result.is_a?(Array) || !result.empty?)
                 expenses = result.is_a?(Array) ? result : [result]
                 expenses.each { |exp| Koine::Database.save_expense(chat_id, exp, "[Foto]") }
@@ -161,16 +159,18 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
                 bot.api.send_message(chat_id: chat_id, text: "⚠️ Não consegui ler essa nota da foto. Você pode tentar outra foto com melhor iluminação/enquadramento ou digitar o gasto manualmente.")
               end
             else
-              bot.api.send_message(chat_id: chat_id, text: "❌ Tive um problema técnico ao baixar sua foto do Telegram.")
+              bot.api.send_message(chat_id: chat_id, text: "❌ Tive um problema técnico ao baixar sua foto do Telegram. Por favor, tente novamente mais tarde.")
             end
+          rescue => e
+            bot.api.send_message(chat_id: chat_id, text: "⚠️ Tive um problema técnico ao processar sua foto.")
           ensure
             File.delete(local_path) if File.exist?(local_path)
           end
+
         end
       end
     rescue => e
-      puts "ERRO: #{e.message}\n#{e.backtrace.first}"
-      bot.api.send_message(chat_id: chat_id, text: "⚠️ Tive um problema ao processar isso.") rescue nil
+      bot.api.send_message(chat_id: chat_id, text: "⚠️ Ocorreu um erro ao processar sua solicitação.") rescue nil
     end
   end
 end

@@ -104,11 +104,9 @@ module Koine
         return nil if text.nil? || text.strip == 'null'
         JSON.parse(text.gsub(/```json|```/, '').strip)
       else
-        puts "Erro na API Gemini: #{response.status} - #{response.body}"
         nil
       end
     rescue => e
-      puts "Erro ao processar resposta: #{e.message}"
       nil
     end
   end

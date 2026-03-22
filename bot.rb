@@ -46,22 +46,33 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
           bot.api.send_message(chat_id: chat_id, text: report_text, parse_mode: 'Markdown')
 
           # 2. Planilha Excel
-          excel_path = Koine::ReportGenerator.generate_excel(chat_id)
-          if File.exist?(excel_path)
-            bot.api.send_document(
-              chat_id: chat_id, 
-              document: Faraday::UploadIO.new(excel_path, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
-              caption: "Planilha detalhada de gastos"
-            )
+          begin
+            excel_path = Koine::ReportGenerator.generate_excel(chat_id)
+            if File.exist?(excel_path)
+              bot.api.send_document(
+                chat_id: chat_id, 
+                document: Faraday::UploadIO.new(excel_path, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+                caption: "📈 Planilha detalhada de gastos"
+              )
+            end
+          rescue => e
+            puts "Erro ao gerar/enviar Excel: #{e.message}"
+            bot.api.send_message(chat_id: chat_id, text: "❌ Não consegui gerar a planilha Excel.")
           end
 
           # 3. Relatório em Áudio (TTS)
-          audio_report = Koine::TTSService.generate_audio(report_text, chat_id)
-          if audio_report && File.exist?(audio_report)
-            bot.api.send_voice(
-              chat_id: chat_id, 
-              voice: Faraday::UploadIO.new(audio_report, 'audio/ogg')
-            )
+          begin
+            audio_report = Koine::TTSService.generate_audio(report_text, chat_id)
+            if audio_report && File.exist?(audio_report)
+              bot.api.send_voice(
+                chat_id: chat_id, 
+                voice: Faraday::UploadIO.new(audio_report, 'audio/ogg'),
+                caption: "🎙️ Relatório de voz"
+              )
+            end
+          rescue => e
+            puts "Erro ao gerar/enviar Áudio: #{e.message}"
+            bot.api.send_message(chat_id: chat_id, text: "❌ Não consegui gerar o relatório em voz.")
           end
 
         elsif message.text

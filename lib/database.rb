@@ -60,6 +60,14 @@ module Koine
       )
     end
 
+    def self.get_monthly_details_for_excel(chat_id)
+      start_date = Time.now.strftime("%Y-%m-01")
+      conn.execute(
+        "SELECT expense_date, description, category, amount FROM expenses WHERE chat_id = ? AND expense_date >= ? ORDER BY expense_date ASC",
+        [chat_id, start_date]
+      )
+    end
+
     def self.get_last_expenses(chat_id, limit = 50)
       start_date = Time.now.strftime("%Y-%m-01")
       rows = conn.execute(

@@ -26,7 +26,7 @@ module Koine
     def self.generate_excel(chat_id)
       details = Database.get_monthly_details_for_excel(chat_id)
       FileUtils.mkdir_p("reports")
-      filename = "reports/gastos_#{chat_id}_#{Time.now.strftime('%Y_%m')}.xlsx"
+      filename = "reports/movimentacoes_#{chat_id}_#{Time.now.strftime('%Y_%m')}.xlsx"
 
       Axlsx::Package.new do |p|
         p.workbook.add_worksheet(name: "Movimentações") do |sheet|

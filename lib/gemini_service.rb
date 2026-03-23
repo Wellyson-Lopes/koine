@@ -35,7 +35,7 @@ module Koine
       return check_cooldown if Time.now < @cooldown_until
       # ... resto do código de áudio ...
       audio_data = Base64.strict_encode64(File.read(audio_path))
-      prompt = "Você é o Koine. Identifique a intenção (SAVE, QUERY, ADVICE, OTHER). Contexto: #{context}. Retorne apenas JSON."
+      prompt = "Você é o Koine. Identifique a intenção (SAVE, INCOME, QUERY, ADVICE, OTHER). Contexto: #{context}. Retorne apenas JSON."
 
       payload = {
         contents: [{

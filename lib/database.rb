@@ -22,12 +22,16 @@ module Koine
         );
       SQL
       
-      # Migração: Atualiza coluna para português se já existir
+      # Migração: Atualiza coluna para português e converte dados antigos
       begin
         db.execute("ALTER TABLE expenses ADD COLUMN transaction_type TEXT DEFAULT 'saída'")
       rescue SQLite3::SQLException
         # Coluna já existe
       end
+      
+      # Garante a migração de registros antigos em inglês
+      db.execute("UPDATE expenses SET transaction_type = 'saída' WHERE transaction_type = 'expense'")
+      db.execute("UPDATE expenses SET transaction_type = 'entrada' WHERE transaction_type = 'income'")
       
       db
     end

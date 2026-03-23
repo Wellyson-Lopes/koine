@@ -49,7 +49,7 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
               bot.api.send_document(
                 chat_id: chat_id, 
                 document: Faraday::UploadIO.new(excel_path, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
-                caption: "📈 Planilha detalhada de gastos"
+                caption: "📈 Planilha de Fluxo de Caixa (Movimentações)"
               )
             end
           rescue => e
@@ -60,14 +60,16 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
           begin
             audio_report = Koine::TTSService.generate_audio(report_text, chat_id)
             if audio_report && File.exist?(audio_report)
-              bot.api.send_voice(
+              bot.api.send_audio(
                 chat_id: chat_id, 
-                voice: Faraday::UploadIO.new(audio_report, 'audio/ogg'),
-                caption: "🎙️ Relatório de voz"
+                audio: Faraday::UploadIO.new(audio_report, 'audio/mpeg'),
+                caption: "🎙️ Relatório de voz (MP3)"
               )
+            else
+              bot.api.send_message(chat_id: chat_id, text: "🔈 Não foi possível gerar o áudio do relatório.")
             end
           rescue => e
-            bot.api.send_message(chat_id: chat_id, text: "❌ Não consegui gerar o relatório em voz.")
+            bot.api.send_message(chat_id: chat_id, text: "❌ Erro ao enviar o relatório em voz.")
           end
 
         elsif message.text
@@ -169,7 +171,7 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
 
               if result && (!result.is_a?(Array) || !result.empty?)
                 expenses = result.is_a?(Array) ? result : [result]
-                expenses.each { |exp| Koine::Database.save_transaction(chat_id, exp, "[Foto]", "expense") }
+                expenses.each { |exp| Koine::Database.save_transaction(chat_id, exp, "[Foto]", "saída") }
                 
                 balance = Koine::Database.get_balance(chat_id)
                 bot.api.send_message(

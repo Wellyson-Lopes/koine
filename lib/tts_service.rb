@@ -1,5 +1,6 @@
 require 'http'
 require 'fileutils'
+require 'uri'
 
 module Koine
   class TTSService
@@ -10,15 +11,15 @@ module Koine
 
       # Limpa o texto
       clean_text = text.gsub(/[\*\_\#]/, "").gsub(/R\$/, "reais").strip
-
+      
       # Tenta usar ElevenLabs se a chave estiver presente
       api_key = ENV['ELEVENLABS_API_KEY']
+      voice_id = ENV['ELEVENLABS_VOICE_ID'] || "JBFqnCBsd6RMkjVDRZzb" # Default: George
+
       if api_key && !api_key.empty?
         begin
-          # Usando o George (ID do seu check_eleven.rb) - Voz quente e cativante
-          voice_id = "JBFqnCBsd6RMkjVDRZzb"
           url = "https://api.elevenlabs.io/v1/text-to-speech/#{voice_id}"
-
+          
           response = HTTP.headers(
             "xi-api-key" => api_key,
             "Content-Type" => "application/json"
@@ -27,14 +28,15 @@ module Koine
             model_id: "eleven_multilingual_v2",
             voice_settings: { stability: 0.5, similarity_boost: 0.75 }
           })
+
           if response.status.success?
             File.open(temp_audio, "wb") { |f| f.write(response.body) }
             system("ffmpeg -y -i #{temp_audio} -c:a libopus -b:a 32k #{final_ogg} > /dev/null 2>&1")
             File.delete(temp_audio) if File.exist?(temp_audio)
             return final_ogg
           end
-        rescue
-          # Se der erro no ElevenLabs, cai para o fallback do Google abaixo
+        rescue StandardError => e
+          # Silencioso, cai para fallback
         end
       end
 
@@ -50,10 +52,11 @@ module Koine
           File.delete(temp_audio) if File.exist?(temp_audio)
           return final_ogg
         end
-      rescue
+      rescue StandardError => e
         nil
+      ensure
+        File.delete(temp_audio) if File.exist?(temp_audio)
       end
     end
-
   end
 end

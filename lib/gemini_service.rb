@@ -33,15 +33,31 @@ module Koine
 
     def process_audio(audio_path, context = nil)
       return check_cooldown if Time.now < @cooldown_until
-      # ... resto do código de áudio ...
       audio_data = Base64.strict_encode64(File.read(audio_path))
-      prompt = "Você é o Koine. Identifique a intenção (SAVE, QUERY, ADVICE, OTHER). Contexto: #{context}. Retorne apenas JSON."
+
+      prompt = <<~PROMPT
+        Você é o Koine, um assistente financeiro amigável. Ouça o áudio e responda de forma NATURAL e CONCISA.
+        Contexto atual de gastos: #{context || "Vazio"}
+        Hoje é: #{Time.now.strftime('%Y-%m-%d')}
+
+        Sua resposta será convertida em áudio, então:
+        - NÃO use símbolos como *, _, # ou R$.
+        - Escreva valores por extenso quando possível (ex: dez reais).
+        - Seja breve e direto, como um áudio de WhatsApp.
+
+        Retorne APENAS um JSON:
+        {
+          "intent": "SAVE", "INCOME", "QUERY", "ADVICE" ou "OTHER",
+          "data": { "item": "...", "valor": 0.0, "categoria": "...", "data": "YYYY-MM-DD" },
+          "response": "Sua frase curta e natural para áudio aqui"
+        }
+      PROMPT
 
       payload = {
         contents: [{
           parts: [
             { text: prompt },
-            { inline_data: { mime_type: "audio/ogg", data: audio_data } }
+            { inline_data: { mime_type: "audio/mp3", data: audio_data } }
           ]
         }]
       }

@@ -6,7 +6,7 @@ module Koine
   class GeminiService
     def initialize(api_key)
       @api_key = api_key
-      @url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=#{@api_key}"
+      @url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=#{@api_key}"
       @cooldown_until = Time.now # Memória de bloqueio
     end
 
@@ -19,12 +19,19 @@ module Koine
         Contexto de gastos: #{context || "Nenhum dado."}
 
         Responda à mensagem: "#{text}"
-        Retorne APENAS um JSON:
+        Retorne APENAS um JSON válido seguindo exatamente este formato:
         {
-          "intent": "SAVE" (despesa), "INCOME" (recebimento), "QUERY", "ADVICE" ou "OTHER",
-          "data": { "item": "...", "valor": 0.0, "categoria": "...", "data": "YYYY-MM-DD" },
+          "intent": "SAVE",
+          "data": { "item": "lanche", "valor": 10.0, "categoria": "comida", "data": "#{Time.now.strftime('%Y-%m-%d')}" },
           "response": "Sua resposta amigável aqui"
         }
+
+        VALORES PERMITIDOS PARA 'intent':
+        - SAVE: para despesas/gastos.
+        - INCOME: para entradas/recebimentos.
+        - QUERY: para perguntas sobre histórico.
+        - ADVICE: para conselhos financeiros.
+        - OTHER: para conversas genéricas.
       PROMPT
 
       payload = { contents: [{ parts: [{ text: prompt }] }] }
@@ -33,15 +40,44 @@ module Koine
 
     def process_audio(audio_path, context = nil)
       return check_cooldown if Time.now < @cooldown_until
-      # ... resto do código de áudio ...
       audio_data = Base64.strict_encode64(File.read(audio_path))
-      prompt = "Você é o Koine. Identifique a intenção (SAVE, INCOME, QUERY, ADVICE, OTHER). Contexto: #{context}. Retorne apenas JSON."
+      
+      # Detecta mime type por extensão para ser coerente com o arquivo
+      extension = File.extname(audio_path).downcase
+      mime_type = case extension
+                  when '.ogg', '.oga', '.opus' then "audio/ogg"
+                  when '.mp3' then "audio/mpeg"
+                  when '.m4a', '.mp4' then "audio/mp4"
+                  when '.wav' then "audio/wav"
+                  when '.aac' then "audio/aac"
+                  else "audio/mpeg" # Fallback seguro
+                  end
+
+      prompt = <<~PROMPT
+        Você é o Koine, um assistente financeiro amigável. Ouça o áudio e responda de forma NATURAL e CONCISA.
+        Contexto atual de gastos: #{context || "Vazio"}
+        Hoje é: #{Time.now.strftime('%Y-%m-%d')}
+
+        Sua resposta será convertida em áudio, então:
+        - NÃO use símbolos como *, _, # ou R$.
+        - Escreva valores por extenso quando possível (ex: dez reais).
+        - Seja breve e direto, como um áudio de WhatsApp.
+
+        Retorne APENAS um JSON válido seguindo exatamente este formato:
+        {
+          "intent": "SAVE",
+          "data": { "item": "lanche", "valor": 10.0, "categoria": "comida", "data": "#{Time.now.strftime('%Y-%m-%d')}" },
+          "response": "Sua frase curta e natural para áudio aqui"
+        }
+
+        VALORES PERMITIDOS PARA 'intent': SAVE, INCOME, QUERY, ADVICE, OTHER.
+      PROMPT
 
       payload = {
         contents: [{
           parts: [
             { text: prompt },
-            { inline_data: { mime_type: "audio/ogg", data: audio_data } }
+            { inline_data: { mime_type: mime_type, data: audio_data } }
           ]
         }]
       }
@@ -51,7 +87,6 @@ module Koine
     def extract_expense_from_image(image_path)
       return check_cooldown if Time.now < @cooldown_until
       image_data = Base64.strict_encode64(File.read(image_path))
-      # ... resto do código de imagem ...
       prompt = "Analise a nota fiscal. Extraia gasto em JSON: {\"item\": \"...\", \"valor\": 0.0, \"categoria\": \"...\", \"data\": \"YYYY-MM-DD\"}"
 
       payload = {
@@ -74,26 +109,25 @@ module Koine
 
     def call_api(payload)
       response = HTTP.post(@url, json: payload)
-
+      
       if response.status.success?
         result = JSON.parse(response.body.to_s)
         text = result.dig('candidates', 0, 'content', 'parts', 0, 'text')
         return { "intent" => "OTHER", "response" => "..." } if text.nil? || text.strip == 'null'
-
+        
         json_match = text.match(/\{.*\}/m)
         return { "intent" => "OTHER", "response" => text } if json_match.nil?
-
+        
         JSON.parse(json_match[0])
       elsif response.status.code == 429
         begin
           error_body = response.body.to_s
           error_data = JSON.parse(error_body)
-
-          # Tenta pegar do campo 'message' via Regex
+          
           message = error_data.dig('error', 'message') || ""
           seconds_match = message.match(/retry in ([\d\.]+)/)
-
-          seconds = 30 # Default
+          
+          seconds = 30
           if seconds_match
             seconds = seconds_match[1].to_f.ceil
           else
@@ -104,10 +138,8 @@ module Koine
               seconds = delay.is_a?(Hash) ? delay['seconds'].to_i : delay.to_s.gsub('s', '').to_i
             end
           end
-
-          # GRAVA NA MEMÓRIA LOCAL: bloqueia por X segundos + 2s de segurança
+          
           @cooldown_until = Time.now + seconds + 2
-
           { "intent" => "OTHER", "response" => "⚠️ Limite atingido! O Google pede para aguardar #{seconds} segundos. Vou bloquear novas tentativas até lá para garantir o reset. ⏳" }
         rescue => e
           @cooldown_until = Time.now + 30

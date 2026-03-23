@@ -24,6 +24,11 @@ gemini = Koine::GeminiService.new(GEMINI_API_KEY)
 
 puts "🚀 Koine Analista iniciado..."
 
+# Helper para escapar caracteres especiais de Markdown
+def escape_md(text)
+  text.to_s.gsub(/([\_\*\[\]\(\)\~\`\>\#\+\-\=\|\{\}\.\!])/, '\\\\\1')
+end
+
 Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
   bot.listen do |message|
     chat_id = message.chat.id rescue nil
@@ -60,10 +65,11 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
           begin
             audio_report = Koine::TTSService.generate_audio(report_text, chat_id)
             if audio_report && File.exist?(audio_report)
-              bot.api.send_audio(
+              # Enviamos como voice (balão redondo) já que o TTS agora converte para .ogg Opus
+              bot.api.send_voice(
                 chat_id: chat_id, 
-                audio: Faraday::UploadIO.new(audio_report, 'audio/mpeg'),
-                caption: "🎙️ Relatório de voz (MP3)"
+                voice: Faraday::UploadIO.new(audio_report, 'audio/ogg'),
+                caption: "🎙️ Relatório de voz"
               )
             else
               bot.api.send_message(chat_id: chat_id, text: "🔈 Não foi possível gerar o áudio do relatório.")
@@ -92,22 +98,31 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
               balance = Koine::Database.get_balance(chat_id)
               status = type == 'entrada' ? "Recebimento registrado! 💰" : "Gasto registrado! 💸"
               
+              # Escapa campos dinâmicos para MarkdownV2
+              item_esc = escape_md(exp['item'])
+              balance_inc = escape_md(balance[:income])
+              balance_exp = escape_md(balance[:expense])
+              balance_total = escape_md(balance[:balance].round(2))
+
               bot.api.send_message(
-                chat_id: chat_id, 
-                text: "✅ #{status}\n\nItem: #{exp['item']}\nValor: R$ #{exp['valor']}\n\n📊 *Saldo do Mês:*\nEntradas: R$ #{balance[:income]}\nSaídas: R$ #{balance[:expense]}\n💰 *Líquido: R$ #{balance[:balance].round(2)}*",
-                parse_mode: 'Markdown'
-              )
-            
+                chat_id: chat_id,
+                text: "✅ #{status}\n\nItem: #{item_esc}\nValor: R$ #{escape_md(exp['valor'])}\n\n📊 *Saldo do Mês:*\nEntradas: R$ #{balance_inc}\nSaídas: R$ #{balance_exp}\n💰 *Líquido: R$ #{balance_total}*",
+                parse_mode: 'MarkdownV2'
+              )            
             when 'QUERY'
               search_term = result.dig('data', 'termo_busca')
               rows = Koine::Database.search_expenses(chat_id, search_term)
-              if rows.empty?
-                bot.api.send_message(chat_id: chat_id, text: "Não encontrei gastos relacionados a '#{search_term}'.")
-              else
-                resp = "Encontrei esses gastos com '#{search_term}':\n"
-                rows.each { |r| resp += "- #{r[0]}: #{r[1]} (R$ #{r[2]})\n" }
-                bot.api.send_message(chat_id: chat_id, text: resp)
-              end
+                if rows.empty?
+                  bot.api.send_message(
+                    chat_id: chat_id, 
+                    text: "Não encontrei gastos relacionados a '#{escape_md(search_term)}'\\.",
+                    parse_mode: 'MarkdownV2'
+                  )
+                else
+                  resp = "Encontrei esses gastos com '#{escape_md(search_term)}':\n"
+                  rows.each { |r| resp += "\\- #{escape_md(r[0])}: #{escape_md(r[1])} (R$ #{escape_md(r[2])})\n" }
+                  bot.api.send_message(chat_id: chat_id, text: resp, parse_mode: 'MarkdownV2')
+                end
 
             when 'ADVICE', 'OTHER'
               msg = result['response'] || "Como posso te ajudar?"
@@ -123,34 +138,64 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
           # No áudio enviamos apenas o resumo como contexto base
           context = "Resumo por categoria: #{Koine::Database.get_monthly_summary(chat_id)}"
           
-          file_id = (message.voice || message.audio).file_id
+          file_voice = (message.voice || message.audio)
+          file_id = file_voice.file_id
           file_info = bot.api.get_file(file_id: file_id)
-          local_path = "data/temp_audio_#{chat_id}.ogg"
+          
+          # Mantém a extensão original para ser fiel ao conteúdo
+          ext = File.extname(file_info.file_path)
+          local_path = "data/temp_audio_#{chat_id}#{ext}"
           
           begin
             response = HTTP.follow.get("https://api.telegram.org/file/bot#{TELEGRAM_TOKEN}/#{file_info.file_path}")
-            File.open(local_path, "wb") { |f| f.write(response.body) }
-            
-            result = gemini.process_audio(local_path, context)
-            
-            if result.is_a?(Hash)
-              if ['SAVE', 'INCOME'].include?(result['intent'])
-                type = result['intent'] == 'INCOME' ? 'entrada' : 'saída'
-                exp = result['data']
-                Koine::Database.save_transaction(chat_id, exp, "[Áudio]", type)
-                
-                balance = Koine::Database.get_balance(chat_id)
-                bot.api.send_message(
-                  chat_id: chat_id, 
-                  text: "✅ Áudio processado!\nItem: #{exp['item']}\nValor: R$ #{exp['valor']}\n\n💰 *Saldo Líquido: R$ #{balance[:balance].round(2)}*",
-                  parse_mode: 'Markdown'
-                )
+            if response.status.success?
+              File.open(local_path, "wb") { |f| f.write(response.body) }
+              
+              result = gemini.process_audio(local_path, context)
+              
+              if result.is_a?(Hash)
+                if ['SAVE', 'INCOME'].include?(result['intent'])
+                  type = result['intent'] == 'INCOME' ? 'entrada' : 'saída'
+                  exp = result['data']
+                  Koine::Database.save_transaction(chat_id, exp, "[Áudio]", type)
+                  
+                  # Resposta em ÁUDIO para o bate-papo
+                  msg_voz = result['response'] || "Registrado com sucesso!"
+                  audio_reply = Koine::TTSService.generate_audio(msg_voz, chat_id)
+                  if audio_reply && File.exist?(audio_reply)
+                    begin
+                      bot.api.send_voice(chat_id: chat_id, voice: Faraday::UploadIO.new(audio_reply, 'audio/ogg'))
+                    rescue => e
+                    ensure
+                      File.delete(audio_reply) if File.exist?(audio_reply)
+                    end
+                  end
+
+                  balance = Koine::Database.get_balance(chat_id)
+                  bot.api.send_message(
+                    chat_id: chat_id, 
+                    text: "✅ Registrei: #{escape_md(exp['item'])} (R$ #{escape_md(exp['valor'])})\n💰 *Saldo: R$ #{escape_md(balance[:balance].round(2))}*",
+                    parse_mode: 'MarkdownV2'
+                  )
+                else
+                  msg = result['response'] || "Não consegui processar esse áudio."
+                  
+                  # Resposta em ÁUDIO para dúvidas/conversas
+                  audio_reply = Koine::TTSService.generate_audio(msg, chat_id)
+                  if audio_reply && File.exist?(audio_reply)
+                    begin
+                      bot.api.send_voice(chat_id: chat_id, voice: Faraday::UploadIO.new(audio_reply, 'audio/ogg'))
+                    rescue => e
+                    ensure
+                      File.delete(audio_reply) if File.exist?(audio_reply)
+                    end
+                  end
+
+                  bot.api.send_message(chat_id: chat_id, text: msg) unless msg.strip.empty?
+                end
               else
-                msg = result['response'] || "Não consegui processar esse áudio."
-                bot.api.send_message(chat_id: chat_id, text: msg) unless msg.strip.empty?
+                bot.api.send_message(chat_id: chat_id, text: "⚠️ Tive um problema ao ouvir seu áudio. Pode tentar gravar novamente?")
               end
-            else
-              bot.api.send_message(chat_id: chat_id, text: "⚠️ Tive um problema ao ouvir seu áudio. Pode tentar gravar novamente?")
             end
           ensure
             File.delete(local_path) if File.exist?(local_path)
@@ -174,10 +219,14 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
                 expenses.each { |exp| Koine::Database.save_transaction(chat_id, exp, "[Foto]", "saída") }
                 
                 balance = Koine::Database.get_balance(chat_id)
+                items_esc = escape_md(expenses.map{|e| e['item']}.join(', '))
+                total_val = expenses.sum{|e| e['valor'].to_f}
+                balance_val = balance[:balance].round(2)
+                
                 bot.api.send_message(
                   chat_id: chat_id, 
-                  text: "✅ Nota lida!\nRegistrado: #{expenses.map{|e| e['item']}.join(', ')}\nTotal: R$ #{expenses.sum{|e| e['valor'].to_f}}\n\n💰 *Saldo Líquido: R$ #{balance[:balance].round(2)}*",
-                  parse_mode: 'Markdown'
+                  text: "✅ Nota lida\!\nRegistrado: #{items_esc}\nTotal: R$ #{escape_md(total_val)}\n\n💰 *Saldo Líquido: R$ #{escape_md(balance_val)}*",
+                  parse_mode: 'MarkdownV2'
                 )
               else
                 bot.api.send_message(chat_id: chat_id, text: "⚠️ Não consegui ler essa nota da foto. Você pode tentar outra foto com melhor iluminação/enquadramento ou digitar o gasto manualmente.")

@@ -21,7 +21,7 @@ module Koine
         Responda à mensagem: "#{text}"
         Retorne APENAS um JSON:
         {
-          "intent": "SAVE", "QUERY", "ADVICE" ou "OTHER",
+          "intent": "SAVE" (despesa), "INCOME" (recebimento), "QUERY", "ADVICE" ou "OTHER",
           "data": { "item": "...", "valor": 0.0, "categoria": "...", "data": "YYYY-MM-DD" },
           "response": "Sua resposta amigável aqui"
         }

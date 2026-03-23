@@ -81,10 +81,20 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
           
           if result.is_a?(Hash)
             case result['intent']
-            when 'SAVE'
+            when 'SAVE', 'INCOME'
+              type = result['intent'] == 'INCOME' ? 'entrada' : 'saída'
               exp = result['data']
-              Koine::Database.save_expense(chat_id, exp, message.text)
-              bot.api.send_message(chat_id: chat_id, text: "✅ Registrado: #{exp['item']} (R$ #{exp['valor']})")
+              Koine::Database.save_transaction(chat_id, exp, message.text, type)
+              
+              # Busca o saldo atualizado
+              balance = Koine::Database.get_balance(chat_id)
+              status = type == 'entrada' ? "Recebimento registrado! 💰" : "Gasto registrado! 💸"
+              
+              bot.api.send_message(
+                chat_id: chat_id, 
+                text: "✅ #{status}\n\nItem: #{exp['item']}\nValor: R$ #{exp['valor']}\n\n📊 *Saldo do Mês:*\nEntradas: R$ #{balance[:income]}\nSaídas: R$ #{balance[:expense]}\n💰 *Líquido: R$ #{balance[:balance].round(2)}*",
+                parse_mode: 'Markdown'
+              )
             
             when 'QUERY'
               search_term = result.dig('data', 'termo_busca')
@@ -122,10 +132,17 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
             result = gemini.process_audio(local_path, context)
             
             if result.is_a?(Hash)
-              if result['intent'] == 'SAVE'
+              if ['SAVE', 'INCOME'].include?(result['intent'])
+                type = result['intent'] == 'INCOME' ? 'entrada' : 'saída'
                 exp = result['data']
-                Koine::Database.save_expense(chat_id, exp, "[Áudio]")
-                bot.api.send_message(chat_id: chat_id, text: "✅ Áudio processado! Registrei: #{exp['item']} (R$ #{exp['valor']})")
+                Koine::Database.save_transaction(chat_id, exp, "[Áudio]", type)
+                
+                balance = Koine::Database.get_balance(chat_id)
+                bot.api.send_message(
+                  chat_id: chat_id, 
+                  text: "✅ Áudio processado!\nItem: #{exp['item']}\nValor: R$ #{exp['valor']}\n\n💰 *Saldo Líquido: R$ #{balance[:balance].round(2)}*",
+                  parse_mode: 'Markdown'
+                )
               else
                 msg = result['response'] || "Não consegui processar esse áudio."
                 bot.api.send_message(chat_id: chat_id, text: msg) unless msg.strip.empty?
@@ -152,8 +169,14 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
 
               if result && (!result.is_a?(Array) || !result.empty?)
                 expenses = result.is_a?(Array) ? result : [result]
-                expenses.each { |exp| Koine::Database.save_expense(chat_id, exp, "[Foto]") }
-                bot.api.send_message(chat_id: chat_id, text: "✅ Nota lida! Registrei: #{expenses.map{|e| e['item']}.join(', ')} (R$ #{expenses.sum{|e| e['valor'].to_f}})")
+                expenses.each { |exp| Koine::Database.save_transaction(chat_id, exp, "[Foto]", "expense") }
+                
+                balance = Koine::Database.get_balance(chat_id)
+                bot.api.send_message(
+                  chat_id: chat_id, 
+                  text: "✅ Nota lida!\nRegistrado: #{expenses.map{|e| e['item']}.join(', ')}\nTotal: R$ #{expenses.sum{|e| e['valor'].to_f}}\n\n💰 *Saldo Líquido: R$ #{balance[:balance].round(2)}*",
+                  parse_mode: 'Markdown'
+                )
               else
                 bot.api.send_message(chat_id: chat_id, text: "⚠️ Não consegui ler essa nota da foto. Você pode tentar outra foto com melhor iluminação/enquadramento ou digitar o gasto manualmente.")
               end

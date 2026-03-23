@@ -1,15 +1,19 @@
 require 'http'
 require 'fileutils'
 require 'uri'
+require 'securerandom'
 
 module Koine
   class TTSService
     def self.generate_audio(text, chat_id)
-      FileUtils.mkdir_p("reports")
-      temp_audio = "reports/temp_#{chat_id}.mp3"
-      final_ogg = "reports/voz_#{chat_id}.ogg"
+      FileUtils.mkdir_p("data")
+      
+      # Gera nomes únicos para evitar condições de corrida (Race Conditions)
+      unique_id = SecureRandom.hex(4)
+      temp_audio = "data/temp_#{chat_id}_#{unique_id}.mp3"
+      final_ogg = "data/voz_#{chat_id}_#{unique_id}.ogg"
 
-      # Limpa o texto
+      # Limpa o texto e prepara para leitura
       clean_text = text.gsub(/[\*\_\#]/, "").gsub(/R\$/, "reais").strip
       
       # Tenta usar ElevenLabs se a chave estiver presente
@@ -31,9 +35,12 @@ module Koine
 
           if response.status.success?
             File.open(temp_audio, "wb") { |f| f.write(response.body) }
-            system("ffmpeg -y -i #{temp_audio} -c:a libopus -b:a 32k #{final_ogg} > /dev/null 2>&1")
+            
+            # Converte com ffmpeg de forma segura (sem shell interpolation) e valida sucesso
+            success = system("ffmpeg", "-y", "-i", temp_audio, "-c:a", "libopus", "-b:a", "32k", final_ogg, out: File::NULL, err: File::NULL)
             File.delete(temp_audio) if File.exist?(temp_audio)
-            return final_ogg
+            
+            return final_ogg if success && File.exist?(final_ogg)
           end
         rescue StandardError => e
           # Silencioso, cai para fallback
@@ -48,9 +55,12 @@ module Koine
 
         if response.status.success?
           File.open(temp_audio, "wb") { |f| f.write(response.body) }
-          system("ffmpeg -y -i #{temp_audio} -c:a libopus -b:a 32k #{final_ogg} > /dev/null 2>&1")
+          
+          # Converte com ffmpeg de forma segura (sem shell interpolation) e valida sucesso
+          success = system("ffmpeg", "-y", "-i", temp_audio, "-c:a", "libopus", "-b:a", "32k", final_ogg, out: File::NULL, err: File::NULL)
           File.delete(temp_audio) if File.exist?(temp_audio)
-          return final_ogg
+          
+          return final_ogg if success && File.exist?(final_ogg)
         end
       rescue StandardError => e
         nil

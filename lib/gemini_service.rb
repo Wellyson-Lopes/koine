@@ -42,8 +42,16 @@ module Koine
       return check_cooldown if Time.now < @cooldown_until
       audio_data = Base64.strict_encode64(File.read(audio_path))
       
-      # Detecta mime type por extensão para ser coerente
-      mime_type = audio_path.end_with?('.ogg') || audio_path.end_with?('.oga') ? "audio/ogg" : "audio/mp3"
+      # Detecta mime type por extensão para ser coerente com o arquivo
+      extension = File.extname(audio_path).downcase
+      mime_type = case extension
+                  when '.ogg', '.oga', '.opus' then "audio/ogg"
+                  when '.mp3' then "audio/mpeg"
+                  when '.m4a', '.mp4' then "audio/mp4"
+                  when '.wav' then "audio/wav"
+                  when '.aac' then "audio/aac"
+                  else "audio/mpeg" # Fallback seguro
+                  end
 
       prompt = <<~PROMPT
         Você é o Koine, um assistente financeiro amigável. Ouça o áudio e responda de forma NATURAL e CONCISA.

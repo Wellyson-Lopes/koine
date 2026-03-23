@@ -98,25 +98,31 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
               balance = Koine::Database.get_balance(chat_id)
               status = type == 'entrada' ? "Recebimento registrado! 💰" : "Gasto registrado! 💸"
               
-              # Escapa campos dinâmicos para Markdown
+              # Escapa campos dinâmicos para MarkdownV2
               item_esc = escape_md(exp['item'])
-              
+              balance_inc = escape_md(balance[:income])
+              balance_exp = escape_md(balance[:expense])
+              balance_total = escape_md(balance[:balance].round(2))
+
               bot.api.send_message(
-                chat_id: chat_id, 
-                text: "✅ #{status}\n\nItem: #{item_esc}\nValor: R$ #{exp['valor']}\n\n📊 *Saldo do Mês:*\nEntradas: R$ #{balance[:income]}\nSaídas: R$ #{balance[:expense]}\n💰 *Líquido: R$ #{balance[:balance].round(2)}*",
-                parse_mode: 'Markdown'
-              )
-            
+                chat_id: chat_id,
+                text: "✅ #{status}\n\nItem: #{item_esc}\nValor: R$ #{escape_md(exp['valor'])}\n\n📊 *Saldo do Mês:*\nEntradas: R$ #{balance_inc}\nSaídas: R$ #{balance_exp}\n💰 *Líquido: R$ #{balance_total}*",
+                parse_mode: 'MarkdownV2'
+              )            
             when 'QUERY'
               search_term = result.dig('data', 'termo_busca')
               rows = Koine::Database.search_expenses(chat_id, search_term)
-              if rows.empty?
-                bot.api.send_message(chat_id: chat_id, text: "Não encontrei gastos relacionados a '#{search_term}'.")
-              else
-                resp = "Encontrei esses gastos com '#{search_term}':\n"
-                rows.each { |r| resp += "- #{r[0]}: #{escape_md(r[1])} (R$ #{r[2]})\n" }
-                bot.api.send_message(chat_id: chat_id, text: resp, parse_mode: 'Markdown')
-              end
+                if rows.empty?
+                  bot.api.send_message(
+                    chat_id: chat_id, 
+                    text: "Não encontrei gastos relacionados a '#{escape_md(search_term)}'\\.",
+                    parse_mode: 'MarkdownV2'
+                  )
+                else
+                  resp = "Encontrei esses gastos com '#{escape_md(search_term)}':\n"
+                  rows.each { |r| resp += "\\- #{escape_md(r[0])}: #{escape_md(r[1])} (R$ #{escape_md(r[2])})\n" }
+                  bot.api.send_message(chat_id: chat_id, text: resp, parse_mode: 'MarkdownV2')
+                end
 
             when 'ADVICE', 'OTHER'
               msg = result['response'] || "Como posso te ajudar?"
@@ -160,14 +166,16 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
                     begin
                       bot.api.send_voice(chat_id: chat_id, voice: Faraday::UploadIO.new(audio_reply, 'audio/ogg'))
                     rescue => e
+                    ensure
+                      File.delete(audio_reply) if File.exist?(audio_reply)
                     end
                   end
 
                   balance = Koine::Database.get_balance(chat_id)
                   bot.api.send_message(
                     chat_id: chat_id, 
-                    text: "✅ Registrei: #{escape_md(exp['item'])} (R$ #{exp['valor']})\n💰 *Saldo: R$ #{balance[:balance].round(2)}*",
-                    parse_mode: 'Markdown'
+                    text: "✅ Registrei: #{escape_md(exp['item'])} (R$ #{escape_md(exp['valor'])})\n💰 *Saldo: R$ #{escape_md(balance[:balance].round(2))}*",
+                    parse_mode: 'MarkdownV2'
                   )
                 else
                   msg = result['response'] || "Não consegui processar esse áudio."
@@ -178,6 +186,8 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
                     begin
                       bot.api.send_voice(chat_id: chat_id, voice: Faraday::UploadIO.new(audio_reply, 'audio/ogg'))
                     rescue => e
+                    ensure
+                      File.delete(audio_reply) if File.exist?(audio_reply)
                     end
                   end
 
@@ -210,11 +220,13 @@ Telegram::Bot::Client.run(TELEGRAM_TOKEN) do |bot|
                 
                 balance = Koine::Database.get_balance(chat_id)
                 items_esc = escape_md(expenses.map{|e| e['item']}.join(', '))
+                total_val = expenses.sum{|e| e['valor'].to_f}
+                balance_val = balance[:balance].round(2)
                 
                 bot.api.send_message(
                   chat_id: chat_id, 
-                  text: "✅ Nota lida!\nRegistrado: #{items_esc}\nTotal: R$ #{expenses.sum{|e| e['valor'].to_f}}\n\n💰 *Saldo Líquido: R$ #{balance[:balance].round(2)}*",
-                  parse_mode: 'Markdown'
+                  text: "✅ Nota lida\!\nRegistrado: #{items_esc}\nTotal: R$ #{escape_md(total_val)}\n\n💰 *Saldo Líquido: R$ #{escape_md(balance_val)}*",
+                  parse_mode: 'MarkdownV2'
                 )
               else
                 bot.api.send_message(chat_id: chat_id, text: "⚠️ Não consegui ler essa nota da foto. Você pode tentar outra foto com melhor iluminação/enquadramento ou digitar o gasto manualmente.")

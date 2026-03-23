@@ -16,7 +16,7 @@ module Koine
       if api_key && !api_key.empty?
         begin
           # Usando o George (ID do seu check_eleven.rb) - Voz quente e cativante
-          voice_id = "JBFqnCBsd6RMkjVDRZzb" 
+          voice_id = "JBFqnCBsd6RMkjVDRZzb"
           url = "https://api.elevenlabs.io/v1/text-to-speech/#{voice_id}"
 
           response = HTTP.headers(
